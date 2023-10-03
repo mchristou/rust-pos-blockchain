@@ -1,0 +1,18 @@
+[package]
+name = "rust-blockchain-pos"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+md5 = "0.7.0"
+chrono = "0.4.30"
+sha2 = "0.10.7"
+tokio = {version = "1.32.0", features = ["sync",
+"macros",
+"rt",
+"rt-multi-thread",
+"net",
+"time", 
+"io-util"] }
+rand = "0.8.5"
