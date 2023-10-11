@@ -1,6 +1,7 @@
+use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
 use sha2::{Digest, Sha256};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{
@@ -17,8 +18,8 @@ pub async fn run_server(
     blockchain: Blockchain,
     validators: Validators,
     candidate_tx: mpsc::Sender<Block>,
-) -> std::io::Result<()> {
-    let transaction_tx = Arc::new(Mutex::new(Vec::<mpsc::Sender<()>>::new()));
+) -> Result<()> {
+    let transaction_tx = Arc::new(RwLock::new(Vec::<mpsc::Sender<()>>::new()));
 
     interval_task(transaction_tx.clone()).await;
 
@@ -32,23 +33,30 @@ pub async fn run_server(
         let validators_cloned = validators.clone();
 
         let (tr_tx, tr_rx) = mpsc::channel(1);
-        transaction_tx.lock().unwrap().push(tr_tx);
+        transaction_tx
+            .write()
+            .map_err(|_| anyhow!("Failed to "))?
+            .push(tr_tx);
 
         tokio::spawn(async move {
-            handle_connection(stream, validators_cloned, candidate_tx, blockchain, tr_rx).await;
+            if let Err(e) =
+                handle_connection(stream, validators_cloned, candidate_tx, blockchain, tr_rx).await
+            {
+                eprintln!("{e}");
+            }
         });
     }
 }
 
-async fn interval_task(all_tx: Arc<Mutex<Vec<mpsc::Sender<()>>>>) {
+async fn interval_task(all_tx: Arc<RwLock<Vec<mpsc::Sender<()>>>>) {
     // simulate transactions
     tokio::spawn(async move {
-        let mut interval = time::interval(Duration::from_secs(5));
+        let mut interval = time::interval(Duration::from_secs(10));
         loop {
             {
                 interval.tick().await;
 
-                let transaction_tx = all_tx.lock().unwrap();
+                let transaction_tx = all_tx.read().expect("Failed to lock transaction tx");
                 for tx in transaction_tx.iter() {
                     if let Err(e) = tx.try_send(()) {
                         eprintln!("{e}");
@@ -65,38 +73,32 @@ async fn handle_connection(
     candidate_tx: mpsc::Sender<Block>,
     blockchain: Blockchain,
     mut rx: mpsc::Receiver<()>,
-) {
-    let address = stream.peer_addr().unwrap().to_string();
+) -> Result<()> {
+    let address = stream.peer_addr()?.to_string();
     println!("Connection from {}", address);
 
     let (mut reader, mut writer) = stream.split();
 
     let _balance = read_from_stream(&mut writer, &mut reader, "Enter balance:\n").await;
-    // TODO: check balance vs stake
+    // Skip check balance vs stake
 
     let validator = hash(&address);
     let amount = read_from_stream(&mut writer, &mut reader, "Enter new amount:\n").await;
-    validators.insert(&validator, amount);
+    validators.insert(&validator, amount)?;
 
-    if let Err(e) = writer
+    writer
         .write_all(format!("Validator hash: {validator}\n").as_bytes())
-        .await
-    {
-        println!("{e}");
-    }
+        .await?;
 
-    if let Err(e) = writer
+    writer
         .write_all(
             format!(
                 "Last block:\n {}\n",
-                blockchain.last().expect("Invalid chain")
+                blockchain.last().context("Invalid chain")?
             )
             .as_bytes(),
         )
-        .await
-    {
-        println!("{e}");
-    }
+        .await?;
 
     loop {
         if (rx.recv().await).is_some() {
@@ -109,18 +111,15 @@ async fn handle_connection(
 
             // simulate broadcast of winning block
             tokio::time::sleep(Duration::from_millis(500)).await;
-            if let Err(e) = writer
+            writer
                 .write_all(
                     format!(
                         "Last block:\n {}\n",
-                        blockchain.last().expect("Invalid chain")
+                        blockchain.last().context("Invalid chain")?
                     )
                     .as_bytes(),
                 )
-                .await
-            {
-                println!("{e}");
-            }
+                .await?;
         }
     }
 }

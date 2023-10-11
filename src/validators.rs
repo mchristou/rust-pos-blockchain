@@ -1,3 +1,4 @@
+use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -13,21 +14,29 @@ impl Validators {
         }
     }
 
-    pub fn insert(&self, key: &str, value: u32) {
-        let mut validators = self.inner.lock().unwrap();
+    pub fn insert(&self, key: &str, value: u32) -> Result<()> {
+        let mut validators = self
+            .inner
+            .lock()
+            .map_err(|_| anyhow!("Failed to lock validators"))?;
 
         let enrty = validators.entry(key.to_string()).or_insert(0);
         *enrty = value;
+
+        Ok(())
     }
 
-    pub fn len(&self) -> usize {
-        let validators = self.inner.lock().unwrap();
+    pub fn len(&self) -> Result<usize> {
+        let validators = self
+            .inner
+            .lock()
+            .map_err(|_| anyhow!("Failed to lock validators"))?;
 
-        validators.len()
+        Ok(validators.len())
     }
 
     pub fn stake(&self, key: &str) -> Option<u32> {
-        let validators = self.inner.lock().unwrap();
+        let validators = self.inner.lock().ok()?;
         validators.get(key).cloned()
     }
 }
